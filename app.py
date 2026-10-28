@@ -294,8 +294,45 @@ if state:
         st.metric("Security Score", f"{sec_score}%", "OWASP Audited")
     with c5:
         exec_status = exec_res.get("status", "NOT_RUN")
-        status_color = "🟢" if exec_status == "PASSED" else "🔴"
-        st.metric("Sandbox Run", f"{status_color} {exec_status}", f"Retry #{state.get('retry_count', 0)}")
+        t_results = state.get("test_results") or exec_res.get("test_results") or []
+        retry_num = state.get("retry_count", 0)
+
+        if t_results:
+            n_pass = sum(1 for r in t_results if r.get("status") == "PASSED")
+            n_fail = sum(1 for r in t_results if r.get("status") == "FAILED")
+            n_total = len(t_results)
+
+            if exec_status == "PASSED":
+                st.metric(
+                    "Sandbox Run",
+                    f"🟢 {n_pass}/{n_total} Passed",
+                    f"Retry #{retry_num}",
+                    help="All browser assertions passed on the target application."
+                )
+            elif n_fail > 0:
+                pass_label = "🟢" if n_pass > 0 else "🔴"
+                st.metric(
+                    "Sandbox Run",
+                    f"{pass_label} {n_pass}/{n_total} Passed",
+                    f"🔴 {n_fail} App Defects Found",
+                    help=f"{n_fail} test assertion(s) caught bugs/missing validations in the target web application. "
+                         f"The testing pipeline ran successfully; {n_pass} tests passed."
+                )
+            else:
+                st.metric(
+                    "Sandbox Run",
+                    f"⚪ {exec_status}",
+                    f"Retry #{retry_num}",
+                    help="Sandbox execution status."
+                )
+        else:
+            status_color = "🟢" if exec_status == "PASSED" else ("⚪" if exec_status == "NOT_RUN" else "🔴")
+            st.metric(
+                "Sandbox Run",
+                f"{status_color} {exec_status}",
+                f"Retry #{retry_num}",
+                help="Automated browser execution status on target application."
+            )
 
     st.divider()
 
@@ -638,27 +675,32 @@ graph TD
         st.write(f"**Final Status:** {exec_res.get('status', 'N/A')}")
         st.write(f"**Duration:** {exec_res.get('duration_seconds', 0)} seconds")
 
-        # Donut chart showing passed vs failed test count if execution results exist
+        # Donut chart showing passed vs failed vs skipped test count if execution results exist
         exec_counts = {}
         if state.get("test_results"):
             t_res = state.get("test_results", [])
             p_count = sum(1 for r in t_res if r.get("status") == "PASSED")
-            f_count = sum(1 for r in t_res if r.get("status") != "PASSED")
-            if p_count > 0 or f_count > 0:
-                exec_counts = {"Passed": p_count, "Failed": f_count}
+            f_count = sum(1 for r in t_res if r.get("status") == "FAILED")
+            s_count = sum(1 for r in t_res if r.get("status") == "SKIPPED")
+            if p_count > 0:
+                exec_counts["Passed"] = p_count
+            if f_count > 0:
+                exec_counts["Failed"] = f_count
+            if s_count > 0:
+                exec_counts["Skipped"] = s_count
         elif exec_res and exec_res.get("status") != "NOT_RUN":
             st_code = exec_res.get("status")
             if st_code == "PASSED":
-                exec_counts = {"Passed": len(app_tcs) or 1, "Failed": 0}
+                exec_counts = {"Passed": len(app_tcs) or 1}
             elif st_code in ("FAILED", "ERROR"):
-                exec_counts = {"Passed": 0, "Failed": 1}
+                exec_counts = {"Failed": 1}
 
         if exec_counts:
             fig_donut = px.pie(
                 names=list(exec_counts.keys()),
                 values=list(exec_counts.values()),
                 color=list(exec_counts.keys()),
-                color_discrete_map={"Passed": "green", "Failed": "red"},
+                color_discrete_map={"Passed": "green", "Failed": "red", "Skipped": "gray"},
                 hole=0.4,
                 title="Execution Results (Pass vs Fail)"
             )
